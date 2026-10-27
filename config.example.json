@@ -1,9 +1,10 @@
 {
+  "_comment": "Create a device access in the Remote back office (Devices -> Add device). It gives you this exact config, including the one-time token. Paste it here.",
   "server": "wss://remote.omranisystems.com/agent",
-  "token": "change-me-to-match-the-servers-agentToken",
+  "token": "per-device-access-token-from-the-back-office",
   "device": {
-    "id": "rpi-3",
-    "name": "Raspberry Pi 3",
+    "id": "hotel-laptop",
+    "name": "Hotel laptop",
     "platform": "linux"
   },
   "gpio": {
