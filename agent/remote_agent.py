@@ -3,30 +3,28 @@
 Remote device agent.
 
 Dials OUT to remote.omranisystems.com over a WebSocket (no inbound ports),
-authenticates with the shared agent token, advertises its capabilities, and
-handles actions the dashboard sends. One codebase for the Raspberry Pi and the
-laptop; GPIO is only active on the Pi (and falls back to a mock elsewhere so
-the control path can be tested without hardware).
+authenticates with its own per-device token (created in the Remote back office),
+advertises its capabilities, and handles the actions the dashboard sends.
+
+Zero dependencies: the WebSocket client is pure standard library
+(agent/ws_client.py), so this runs on any device with Python 3.8+ — no pip
+install. gpiozero is used only if present (real GPIO on a Pi); otherwise GPIO
+runs in mock mode.
 
 M1 scope: the `gpio` capability (digital pin = light, PWM pin = servo).
 Camera / scripts / shell arrive in later milestones.
 
 Run:  python3 agent/remote_agent.py --config config.json
-Deps: see requirements.txt  (websockets; gpiozero only on the Pi)
 """
 
 import argparse
-import asyncio
 import json
 import os
 import sys
+import time
 
-try:
-    import websockets
-except ImportError:
-    sys.exit("missing dependency: pip install websockets")
-
-from gpio import GpioController  # noqa: E402  (local module, same folder)
+from ws_client import WebSocketClient, WebSocketError
+from gpio import GpioController
 
 
 def load_config(path):
@@ -40,6 +38,7 @@ class Agent:
         self.device = cfg["device"]
         self.token = cfg["token"]
         self.url = cfg["server"]
+        self.insecure = bool(cfg.get("insecure", False))
         self.gpio = GpioController(cfg.get("gpio", {}).get("pins", []))
 
     def capabilities(self):
@@ -49,8 +48,7 @@ class Agent:
             caps.append({"cap": "gpio", "pins": pins})
         return caps
 
-    async def handle_action(self, msg):
-        """Return a result dict for an incoming action message."""
+    def handle_action(self, msg):
         cap = msg.get("cap")
         op = msg.get("do")
         args = msg.get("args") or {}
@@ -62,17 +60,21 @@ class Agent:
         except Exception as exc:  # noqa: BLE001 — report any failure back to the UI
             return {"ok": False, "error": str(exc)}
 
-    async def run_once(self):
-        async with websockets.connect(self.url, max_size=2 ** 20) as ws:
-            await ws.send(json.dumps({
-                "type": "hello",
-                "token": self.token,
-                "device": self.device,
-                "capabilities": self.capabilities(),
-            }))
-            print(f"[agent] connected as {self.device['id']} -> {self.url}")
-
-            async for raw in ws:
+    def run_once(self):
+        ws = WebSocketClient(self.url, insecure=self.insecure)
+        ws.connect()
+        ws.send(json.dumps({
+            "type": "hello",
+            "token": self.token,
+            "device": self.device,
+            "capabilities": self.capabilities(),
+        }))
+        print(f"[agent] connected as {self.device['id']} -> {self.url}")
+        try:
+            while True:
+                raw = ws.recv()
+                if raw is None:
+                    break
                 try:
                     msg = json.loads(raw)
                 except (ValueError, TypeError):
@@ -82,18 +84,22 @@ class Agent:
                     print("[agent] registered; capabilities:",
                           ", ".join(c["cap"] for c in self.capabilities()) or "(none)")
                 elif mtype == "action":
-                    result = await self.handle_action(msg)
-                    await ws.send(json.dumps({"type": "result", "reqId": msg.get("reqId"), **result}))
+                    result = self.handle_action(msg)
+                    ws.send(json.dumps({"type": "result", "reqId": msg.get("reqId"), **result}))
+        finally:
+            ws.close()
 
-    async def run_forever(self):
+    def run_forever(self):
         delay = 1
         while True:
             try:
-                await self.run_once()
-            except Exception as exc:  # noqa: BLE001 — reconnect on any drop
+                self.run_once()
+            except (WebSocketError, OSError) as exc:
                 print(f"[agent] disconnected: {exc}")
+            except Exception as exc:  # noqa: BLE001
+                print(f"[agent] error: {exc}")
             print(f"[agent] reconnecting in {delay}s…")
-            await asyncio.sleep(delay)
+            time.sleep(delay)
             delay = min(delay * 2, 15)
 
 
@@ -101,10 +107,14 @@ def main():
     ap = argparse.ArgumentParser(description="Remote device agent")
     ap.add_argument("--config", default=os.path.join(os.path.dirname(__file__), "..", "config.json"))
     args = ap.parse_args()
+    try:
+        sys.stdout.reconfigure(line_buffering=True)  # prompt logs under systemd / redirect
+    except Exception:
+        pass
     cfg = load_config(args.config)
     agent = Agent(cfg)
     try:
-        asyncio.run(agent.run_forever())
+        agent.run_forever()
     except KeyboardInterrupt:
         print("\n[agent] bye")
     finally:

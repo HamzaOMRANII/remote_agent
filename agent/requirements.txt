@@ -1,7 +1,6 @@
-# Core (all platforms)
-websockets>=12.0
-
-# Raspberry Pi only — GPIO (light / servo). On a laptop the agent runs in
-# mock mode without this, so it's optional off-Pi.
-#   pip install gpiozero
-gpiozero>=2.0 ; platform_machine == "armv7l" or platform_machine == "aarch64"
+# No third-party dependencies required — the WebSocket client is pure standard
+# library (agent/ws_client.py). The agent runs on any device with Python 3.8+.
+#
+# Raspberry Pi only — real GPIO (light / servo). Without it the agent runs GPIO
+# in mock mode, so it's optional and only needed on a Pi:
+#   pip install gpiozero       (or: sudo apt install python3-gpiozero)

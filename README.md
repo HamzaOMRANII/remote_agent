@@ -6,7 +6,9 @@ on a device you own (Raspberry Pi, laptop); it **dials out** to
 with its own per-device token (created in the Remote back office), advertises its
 capabilities, and handles the actions the dashboard sends.
 
-One codebase for Pi + laptop. On a Pi it drives real GPIO via `gpiozero`;
+One codebase for Pi + laptop, with **zero dependencies** — the WebSocket client
+is pure Python standard library (`agent/ws_client.py`), so it runs on any device
+with Python 3.8+ (no pip install). On a Pi it drives real GPIO via `gpiozero`;
 anywhere else it runs GPIO in **mock mode** so the whole path can be tested
 without hardware.
 
