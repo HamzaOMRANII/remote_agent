@@ -63,3 +63,13 @@ Each device has its own token, created in the back office and revocable there
 (rotate / disable / delete), sent only over TLS (`wss://`). Keep `config.json`
 (it holds the token) out of git — it already is, via `.gitignore`. In-person
 pairing + 2FA are the remaining M4 work.
+
+## Scripts & shell (M3)
+
+- **scripts** — add allow-listed commands to `config.json`; each shows as a
+  button on the dashboard and streams its output. Only the id/label are sent to
+  the server — the command stays on the device.
+- **shell** — set `"shell": { "enabled": true }` to offer an interactive
+  terminal. It's **off by default**, **admin-only** on the dashboard, gated
+  behind a password re-prompt, and every command is audit-logged. Uses a pty
+  (POSIX only).

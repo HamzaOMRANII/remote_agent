@@ -25,6 +25,7 @@ import time
 
 from ws_client import WebSocketClient, WebSocketError
 from gpio import GpioController
+from shell import ShellManager
 
 
 def load_config(path):
@@ -40,29 +41,50 @@ class Agent:
         self.url = cfg["server"]
         self.insecure = bool(cfg.get("insecure", False))
         self.gpio = GpioController(cfg.get("gpio", {}).get("pins", []))
+        self.scripts = cfg.get("scripts", [])
+        self.shell_enabled = bool(cfg.get("shell", {}).get("enabled", False))
+        self.shellmgr = None  # created per connection (needs the live ws)
 
     def capabilities(self):
         caps = []
         pins = self.cfg.get("gpio", {}).get("pins", [])
         if pins:
             caps.append({"cap": "gpio", "pins": pins})
+        if self.scripts:
+            # advertise id + label only; commands stay on the device
+            caps.append({"cap": "scripts", "scripts": [{"id": s["id"], "label": s.get("label", s["id"])} for s in self.scripts]})
+        if self.shell_enabled:
+            caps.append({"cap": "shell"})
         return caps
 
-    def handle_action(self, msg):
-        cap = msg.get("cap")
-        op = msg.get("do")
+    def _reply(self, ws, req, body):
+        ws.send(json.dumps({"type": "result", "reqId": req, **body}))
+
+    def dispatch(self, ws, msg):
+        cap, op, req = msg.get("cap"), msg.get("do"), msg.get("reqId")
         args = msg.get("args") or {}
         try:
             if cap == "gpio" and op == "set":
-                data = self.gpio.set(int(args["pin"]), args["value"])
-                return {"ok": True, "data": data}
-            return {"ok": False, "error": f"unsupported: {cap}/{op}"}
-        except Exception as exc:  # noqa: BLE001 — report any failure back to the UI
-            return {"ok": False, "error": str(exc)}
+                self._reply(ws, req, {"ok": True, "data": self.gpio.set(int(args["pin"]), args["value"])})
+            elif cap == "scripts" and op == "run":
+                self.shellmgr.run_script(req, args.get("id"))          # streams + sends its own result
+            elif cap == "shell" and op == "open":
+                self.shellmgr.open(req, args.get("sid"))               # streams + sends its own result
+            elif cap == "shell" and op == "input":
+                self.shellmgr.input(args.get("sid"), args.get("data", "")); self._reply(ws, req, {"ok": True})
+            elif cap == "shell" and op == "resize":
+                self.shellmgr.resize(args.get("sid"), args.get("cols", 80), args.get("rows", 24)); self._reply(ws, req, {"ok": True})
+            elif cap == "shell" and op == "close":
+                self.shellmgr.close(args.get("sid")); self._reply(ws, req, {"ok": True})
+            else:
+                self._reply(ws, req, {"ok": False, "error": f"unsupported: {cap}/{op}"})
+        except Exception as exc:  # noqa: BLE001 — surface any failure to the UI
+            self._reply(ws, req, {"ok": False, "error": str(exc)})
 
     def run_once(self):
         ws = WebSocketClient(self.url, insecure=self.insecure)
         ws.connect()
+        self.shellmgr = ShellManager(ws, self.scripts, self.shell_enabled)
         ws.send(json.dumps({
             "type": "hello",
             "token": self.token,
@@ -84,9 +106,10 @@ class Agent:
                     print("[agent] registered; capabilities:",
                           ", ".join(c["cap"] for c in self.capabilities()) or "(none)")
                 elif mtype == "action":
-                    result = self.handle_action(msg)
-                    ws.send(json.dumps({"type": "result", "reqId": msg.get("reqId"), **result}))
+                    self.dispatch(ws, msg)
         finally:
+            if self.shellmgr:
+                self.shellmgr.shutdown()
             ws.close()
 
     def run_forever(self):

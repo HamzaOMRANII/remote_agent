@@ -12,6 +12,7 @@ import os
 import socket
 import ssl
 import struct
+import threading
 from urllib.parse import urlparse
 
 OP_CONT = 0x0
@@ -32,6 +33,7 @@ class WebSocketClient:
         self.insecure = insecure
         self.timeout = timeout
         self.sock = None
+        self._send_lock = threading.Lock()  # streaming threads + main loop both send
 
     def connect(self):
         u = urlparse(self.url)
@@ -100,7 +102,9 @@ class WebSocketClient:
             header += struct.pack("!B", mask_bit | 127) + struct.pack("!Q", length)
         mask = os.urandom(4)
         masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
-        self.sock.sendall(header + mask + masked)
+        with self._send_lock:
+            if self.sock:
+                self.sock.sendall(header + mask + masked)
 
     def send(self, text):
         self._send_frame(OP_TEXT, text.encode("utf-8"))

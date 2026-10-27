@@ -1,16 +1,18 @@
 {
-  "_comment": "Create a device access in the Remote back office (Devices -> Add device). It gives you this exact config, including the one-time token. Paste it here.",
+  "_comment": "Create a device access in the Remote back office (Devices -> Add device). It gives you the server URL, the one-time token, and the device block. Add scripts/shell below as needed.",
   "server": "wss://remote.omranisystems.com/agent",
   "token": "per-device-access-token-from-the-back-office",
-  "device": {
-    "id": "hotel-laptop",
-    "name": "Hotel laptop",
-    "platform": "linux"
-  },
-  "gpio": {
-    "pins": [
-      { "id": 17, "kind": "digital", "label": "Desk light" },
-      { "id": 18, "kind": "pwm", "label": "Servo", "min_angle": -90, "max_angle": 90 }
-    ]
-  }
+  "device": { "id": "hotel-laptop", "name": "Hotel laptop", "platform": "linux" },
+
+  "gpio": { "pins": [
+    { "id": 17, "kind": "digital", "label": "Desk light" },
+    { "id": 18, "kind": "pwm", "label": "Servo", "min_angle": -90, "max_angle": 90 }
+  ] },
+
+  "scripts": [
+    { "id": "uptime", "label": "Uptime", "cmd": "uptime" },
+    { "id": "reboot-cam", "label": "Restart camera service", "cmd": "systemctl restart my-camera.service" }
+  ],
+
+  "shell": { "enabled": false }
 }
