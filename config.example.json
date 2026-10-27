@@ -1,0 +1,15 @@
+{
+  "server": "wss://remote.omranisystems.com/agent",
+  "token": "change-me-to-match-the-servers-agentToken",
+  "device": {
+    "id": "rpi-3",
+    "name": "Raspberry Pi 3",
+    "platform": "linux"
+  },
+  "gpio": {
+    "pins": [
+      { "id": 17, "kind": "digital", "label": "Desk light" },
+      { "id": 18, "kind": "pwm", "label": "Servo", "min_angle": -90, "max_angle": 90 }
+    ]
+  }
+}
