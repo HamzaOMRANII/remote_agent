@@ -3,8 +3,8 @@
 The device agent for [Remote](https://github.com/HamzaOMRANII/remote). Install it
 on a device you own (Raspberry Pi, laptop); it **dials out** to
 `remote.omranisystems.com` over a WebSocket — no inbound ports — authenticates
-with the shared agent token, advertises its capabilities, and handles the actions
-the dashboard sends.
+with its own per-device token (created in the Remote back office), advertises its
+capabilities, and handles the actions the dashboard sends.
 
 One codebase for Pi + laptop. On a Pi it drives real GPIO via `gpiozero`;
 anywhere else it runs GPIO in **mock mode** so the whole path can be tested
@@ -38,7 +38,7 @@ python3 agent/remote_agent.py --config config.json
 ```json
 {
   "server": "wss://remote.omranisystems.com/agent",
-  "token":  "must match the server's agentToken",
+  "token":  "one-time per-device token from Devices -> Add device",
   "device": { "id": "rpi-3", "name": "Raspberry Pi 3", "platform": "linux" },
   "gpio": { "pins": [
     { "id": 17, "kind": "digital", "label": "Desk light" },
@@ -57,6 +57,7 @@ On the Pi, a systemd unit keeps it running and reconnecting across reboots
 
 ## Security
 
-v1 uses a shared token behind TLS (`wss://`). The M4 milestone of Remote
-replaces this with per-device keys + in-person pairing. Keep `config.json` (it
-holds the token) out of git — it already is, via `.gitignore`.
+Each device has its own token, created in the back office and revocable there
+(rotate / disable / delete), sent only over TLS (`wss://`). Keep `config.json`
+(it holds the token) out of git — it already is, via `.gitignore`. In-person
+pairing + 2FA are the remaining M4 work.
