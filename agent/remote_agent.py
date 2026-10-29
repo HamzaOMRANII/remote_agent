@@ -15,13 +15,22 @@ M1 scope: the `gpio` capability (digital pin = light, PWM pin = servo).
 Camera / scripts / shell arrive in later milestones.
 
 Run:  python3 agent/remote_agent.py --config config.json
+
+Pair (M4): instead of copying the token, open "Pair (QR)" on the device card in
+the dashboard and run, once:
+      python3 agent/remote_agent.py --pair ABCD-EFGH --url https://remote.omranisystems.com
+The one-time code is exchanged over HTTPS for this device's credentials, which
+are merged into config.json (gpio / scripts / shell settings are kept).
 """
 
 import argparse
 import json
 import os
+import platform
 import sys
 import time
+import urllib.error
+import urllib.request
 
 from ws_client import WebSocketClient, WebSocketError
 from gpio import GpioController
@@ -31,6 +40,48 @@ from shell import ShellManager
 def load_config(path):
     with open(path, "r", encoding="utf-8") as fh:
         return json.load(fh)
+
+
+def pair(code, base_url, path):
+    """Claim a one-time pairing code and write the credentials into config.json."""
+    cfg = {}
+    if os.path.exists(path):
+        cfg = load_config(path)
+    if not base_url:
+        server = cfg.get("server", "wss://remote.omranisystems.com/agent")
+        base_url = server.replace("wss://", "https://").replace("ws://", "http://").rsplit("/agent", 1)[0]
+    req = urllib.request.Request(
+        base_url.rstrip("/") + "/api/pair/claim",
+        data=json.dumps({"code": code}).encode(),
+        headers={"Content-Type": "application/json", "User-Agent": "remote-agent"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            got = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        try:
+            msg = json.loads(exc.read().decode()).get("error")
+        except Exception:  # noqa: BLE001
+            msg = None
+        sys.exit(f"[agent] pairing failed: {msg or exc}")
+    except urllib.error.URLError as exc:
+        sys.exit(f"[agent] pairing failed: cannot reach {base_url} ({exc.reason})")
+
+    device = cfg.get("device", {})
+    device.update({"id": got["device"]["id"], "name": got["device"].get("name") or got["device"]["id"]})
+    device.setdefault("platform", platform.system().lower() or "linux")
+    cfg.update({"server": got["server"], "token": got["token"], "device": device})
+    cfg.pop("_comment", None)
+    cfg.setdefault("gpio", {"pins": []})
+
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)  # holds a secret
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(cfg, fh, indent=2)
+        fh.write("\n")
+    os.replace(tmp, path)
+    print(f"[agent] paired as {device['id']} -> wrote {os.path.abspath(path)}")
 
 
 class Agent:
@@ -129,11 +180,18 @@ class Agent:
 def main():
     ap = argparse.ArgumentParser(description="Remote device agent")
     ap.add_argument("--config", default=os.path.join(os.path.dirname(__file__), "..", "config.json"))
+    ap.add_argument("--pair", metavar="CODE", help="one-time pairing code from the dashboard (Pair (QR))")
+    ap.add_argument("--url", help="dashboard URL for --pair (default: from config, else remote.omranisystems.com)")
+    ap.add_argument("--pair-only", action="store_true", help="with --pair: write config.json and exit")
     args = ap.parse_args()
     try:
         sys.stdout.reconfigure(line_buffering=True)  # prompt logs under systemd / redirect
     except Exception:
         pass
+    if args.pair:
+        pair(args.pair, args.url, args.config)
+        if args.pair_only:
+            return
     cfg = load_config(args.config)
     agent = Agent(cfg)
     try:

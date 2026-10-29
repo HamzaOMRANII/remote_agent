@@ -20,20 +20,21 @@ without hardware.
 
 ## Install
 
-**Raspberry Pi:**
-```bash
-sudo apt install python3-gpiozero        # or: pip install gpiozero
-pip install websockets
-cp config.example.json config.json       # set server URL, token, your pins
-python3 agent/remote_agent.py --config config.json
-```
+No pip packages needed (Python 3.8+, stdlib only). On a Raspberry Pi, add
+`sudo apt install python3-gpiozero` for real GPIO; elsewhere GPIO runs in mock mode.
 
-**Laptop (mock GPIO, for testing):**
+**Pair (recommended):** in the dashboard, open the device card → **Pair (QR)**,
+then on the device, from this folder:
 ```bash
-pip install websockets
-cp config.example.json config.json       # point server at ws://127.0.0.1:16010/agent
-python3 agent/remote_agent.py --config config.json
+python3 agent/remote_agent.py --pair ABCD-EFGH --url https://remote.omranisystems.com
 ```
+The one-time code (10 min) is exchanged over HTTPS for the device's credentials,
+which are written into `config.json` (mode 600; existing gpio/scripts/shell
+settings are kept), and the agent starts. Add `--pair-only` to just write the
+config. Later runs: `python3 agent/remote_agent.py`.
+
+**Manual:** `cp config.example.json config.json`, paste the token from
+**Reveal config**, then `python3 agent/remote_agent.py --config config.json`.
 
 ## Config (`config.json`, gitignored)
 
