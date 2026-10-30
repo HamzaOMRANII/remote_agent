@@ -14,5 +14,10 @@
     { "id": "reboot-cam", "label": "Restart camera service", "cmd": "systemctl restart my-camera.service" }
   ],
 
-  "shell": { "enabled": false }
+  "shell": { "enabled": false },
+
+  "_cameras_comment": "Local IP cameras to relay. Each needs its OWN device access (Devices -> Add device gives id + token). Find addresses with: python3 agent/remote_agent.py --scan. See the README for each brand's rtsp:// path.",
+  "cameras": [
+    { "id": "front-door", "name": "Front door", "token": "device-access-token-for-this-camera", "rtsp": "rtsp://user:password@192.168.1.50:554/Streaming/Channels/101", "audio": false }
+  ]
 }

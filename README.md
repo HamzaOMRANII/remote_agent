@@ -16,7 +16,8 @@ without hardware.
 
 - ✅ Connect + auto-reconnect, `hello` handshake, capability advertisement.
 - ✅ `gpio` capability: digital pin (light on/off) and PWM pin (servo angle).
-- ⏳ `camera` (M2, WebRTC via `aiortc`), `scripts` / `shell` (M3), `media` (M6).
+- ✅ `scripts` / `shell`, one-time **pairing**.
+- ✅ `camera`: relay **local IP cameras** (RTSP) to the dashboard — see below.
 
 ## Install
 
@@ -52,6 +53,54 @@ config. Later runs: `python3 agent/remote_agent.py`.
 
 Pin `kind`: `digital` renders a switch in the dashboard; `pwm` renders a servo
 slider (`min_angle`/`max_angle`).
+
+## IP cameras (RTSP → dashboard)
+
+Relay the Wi-Fi/IP cameras on your local network to the dashboard. The agent (on
+a laptop, PC or Pi that stays on, **on the same network as the cameras**) pulls
+each camera's RTSP stream and relays it over WebRTC. Each camera shows up as its
+own tile, just like a phone. The server and dashboard need no changes.
+
+**1. Install the media library** (only needed for cameras):
+```bash
+pip install aiortc          # bundles ffmpeg via PyAV; nothing else to install
+```
+
+**2. Find your cameras' addresses:**
+```bash
+python3 agent/remote_agent.py --scan
+```
+This lists devices on your network with the camera port (554) open. It can't log
+in to them — you still need each camera's username/password and stream path.
+
+**3. Give each camera its own device access:** in the dashboard, **Devices → Add
+device**, once per camera. Copy the `id` and `token`.
+
+**4. Add a `cameras` list to `config.json`:**
+```json
+"cameras": [
+  { "id": "front-door", "name": "Front door",
+    "token": "the-token-for-this-camera",
+    "rtsp": "rtsp://user:password@192.168.1.50:554/Streaming/Channels/101",
+    "audio": false }
+]
+```
+Restart the agent. Each camera appears online in the dashboard within seconds;
+the stream opens when you click it (the camera is only pulled while watched).
+
+**RTSP paths by brand** (put your camera's user/password and LAN IP in):
+| Brand | Typical main-stream URL |
+|-------|-------------------------|
+| Hikvision | `rtsp://user:pass@IP:554/Streaming/Channels/101` |
+| Dahua | `rtsp://user:pass@IP:554/cam/realmonitor?channel=1&subtype=0` |
+| Reolink | `rtsp://user:pass@IP:554/h264Preview_01_main` |
+| TP-Link Tapo | `rtsp://user:pass@IP:554/stream1` |
+| Imou / EZVIZ | `rtsp://user:pass@IP:554/cam/realmonitor?channel=1&subtype=0` |
+| ONVIF (generic) | use the camera's app, or try the paths above |
+
+Enable RTSP in the camera's own app first (often under *Advanced / Network /
+RTSP*), and create a viewer account there rather than using the admin login.
+If a camera is slow or drops, set `"transport": "udp"` on that entry.
 
 ## Run as a service (later)
 

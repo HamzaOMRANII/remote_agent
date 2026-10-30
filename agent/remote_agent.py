@@ -35,6 +35,8 @@ import urllib.request
 from ws_client import WebSocketClient, WebSocketError
 from gpio import GpioController
 from shell import ShellManager
+from camera import CameraManager, validate_cameras
+import scan
 
 
 def load_config(path):
@@ -183,22 +185,35 @@ def main():
     ap.add_argument("--pair", metavar="CODE", help="one-time pairing code from the dashboard (Pair (QR))")
     ap.add_argument("--url", help="dashboard URL for --pair (default: from config, else remote.omranisystems.com)")
     ap.add_argument("--pair-only", action="store_true", help="with --pair: write config.json and exit")
+    ap.add_argument("--scan", action="store_true", help="find IP cameras on the local network and exit")
     args = ap.parse_args()
     try:
         sys.stdout.reconfigure(line_buffering=True)  # prompt logs under systemd / redirect
     except Exception:
         pass
+    if args.scan:
+        scan.run()
+        return
     if args.pair:
         pair(args.pair, args.url, args.config)
         if args.pair_only:
             return
     cfg = load_config(args.config)
+
+    cameras = cfg.get("cameras", [])
+    problems = validate_cameras(cameras)
+    if problems:
+        sys.exit("[agent] camera config errors:\n  " + "\n  ".join(problems))
+    cams = CameraManager(cfg["server"], bool(cfg.get("insecure", False)), cameras)
+    cams.start()
+
     agent = Agent(cfg)
     try:
         agent.run_forever()
     except KeyboardInterrupt:
         print("\n[agent] bye")
     finally:
+        cams.stop()
         agent.gpio.close()
 
 

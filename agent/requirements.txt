@@ -1,6 +1,10 @@
-# No third-party dependencies required — the WebSocket client is pure standard
-# library (agent/ws_client.py). The agent runs on any device with Python 3.8+.
+# The core agent needs NO third-party packages — the WebSocket client is pure
+# standard library (agent/ws_client.py). Runs on any device with Python 3.8+.
 #
-# Raspberry Pi only — real GPIO (light / servo). Without it the agent runs GPIO
-# in mock mode, so it's optional and only needed on a Pi:
+# Raspberry Pi only — real GPIO (light / servo):
 #   pip install gpiozero       (or: sudo apt install python3-gpiozero)
+#
+# IP cameras only — relaying RTSP cameras to the dashboard (the "cameras" list
+# in config.json). Needs a media stack; aiortc bundles ffmpeg via PyAV, so this
+# one line is all that's required:
+#   pip install aiortc
