@@ -16,8 +16,11 @@
 
   "shell": { "enabled": false },
 
-  "_cameras_comment": "Local IP cameras to relay. Each needs its OWN device access (Devices -> Add device gives id + token). Find addresses with: python3 agent/remote_agent.py --scan. See the README for each brand's rtsp:// path.",
+  "_discovery_comment": "Your own networks: 'Scan for cameras' on the dashboard only works while this computer is on one of them (M7).",
+  "discovery": { "networks": ["192.168.1.0/24"] },
+
+  "_cameras_comment": "Local IP cameras to relay. Find them with: python3 agent/remote_agent.py --scan. Without a token they show in this device's camera picker; with their own device access (id + token) they show as separate devices. See the README for each brand's rtsp:// path.",
   "cameras": [
-    { "id": "front-door", "name": "Front door", "token": "device-access-token-for-this-camera", "rtsp": "rtsp://user:password@192.168.1.50:554/Streaming/Channels/101", "audio": false }
+    { "id": "front-door", "name": "Front door", "rtsp": "rtsp://user:password@192.168.1.50:554/Streaming/Channels/102", "audio": false }
   ]
 }

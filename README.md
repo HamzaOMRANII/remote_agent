@@ -58,35 +58,43 @@ slider (`min_angle`/`max_angle`).
 
 Relay the Wi-Fi/IP cameras on your local network to the dashboard. The agent (on
 a laptop, PC or Pi that stays on, **on the same network as the cameras**) pulls
-each camera's RTSP stream and relays it over WebRTC. Each camera shows up as its
-own tile, just like a phone. The server and dashboard need no changes.
+each camera's RTSP stream and relays it over WebRTC (the camera is only pulled
+while someone watches).
 
 **1. Install the media library** (only needed for cameras):
 ```bash
 pip install aiortc          # bundles ffmpeg via PyAV; nothing else to install
 ```
 
-**2. Find your cameras' addresses:**
+**2. Find your cameras (M7):**
 ```bash
 python3 agent/remote_agent.py --scan
 ```
-This lists devices on your network with the camera port (554) open. It can't log
-in to them — you still need each camera's username/password and stream path.
+Asks the network who speaks ONVIF (brand, model, service address) and checks the
+usual camera ports (554/8554 video, 80/8080/443 web page, 8000 Hikvision, 37777
+Dahua, 1935 RTMP) on this computer's /24. Private addresses only; it never tries a
+password. To scan **from the dashboard** too (button *Scan for cameras*), list
+your own networks in `config.json`; the button only appears while the computer
+is on one of them:
+```json
+"discovery": { "networks": ["192.168.1.0/24"] }
+```
 
-**3. Give each camera its own device access:** in the dashboard, **Devices → Add
-device**, once per camera. Copy the `id` and `token`.
-
-**4. Add a `cameras` list to `config.json`:**
+**3. Add them to `config.json` — no extra device access needed:**
 ```json
 "cameras": [
   { "id": "front-door", "name": "Front door",
-    "token": "the-token-for-this-camera",
-    "rtsp": "rtsp://user:password@192.168.1.50:554/Streaming/Channels/101",
-    "audio": false }
+    "rtsp": "rtsp://user:password@192.168.1.50:554/Streaming/Channels/102" },
+  { "id": "garden", "name": "Garden",
+    "rtsp": "rtsp://user:password@192.168.1.51:554/cam/realmonitor?channel=1&subtype=1" }
 ]
 ```
-Restart the agent. Each camera appears online in the dashboard within seconds;
-the stream opens when you click it (the camera is only pulled while watched).
+Restart the agent. The cameras appear in **this device's camera picker** on the
+dashboard (one device, many cameras). Prefer each camera's sub stream (lower
+resolution, e.g. `/102` on Hikvision) to save your home upload.
+
+*Older setup, still supported:* an entry with its own `"token"` (from **Devices
+→ Add device**) appears as its own device instead.
 
 **RTSP paths by brand** (put your camera's user/password and LAN IP in):
 | Brand | Typical main-stream URL |
