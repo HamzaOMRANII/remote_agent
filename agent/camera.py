@@ -60,14 +60,18 @@ def _http_base(ws_url):
 
 
 class CameraDevice:
-    """One RTSP camera, presented to the dashboard as its own device."""
+    """One RTSP camera. With its own "token" it is its own device on the dashboard (its own connection);
+    without one it is ATTACHED to this agent's device (M7c/M7d): it shows in that device's camera picker and its
+    signals travel on the agent's connection, labelled with the camera id."""
 
     def __init__(self, ws_url, insecure, cam):
         self.ws_url = ws_url
         self.insecure = insecure
         self.id = cam["id"]
         self.name = cam.get("name") or cam["id"]
-        self.token = cam["token"]
+        self.token = cam.get("token") or ""
+        self.attached = not self.token
+        self._send_attached = None  # set by CameraManager: (viewer, data) -> None, on the agent's connection
         self.rtsp = cam["rtsp"]
         self.want_audio = bool(cam.get("audio", False))
         # ffmpeg/PyAV options for a reliable pull from most cameras. Kept to widely
@@ -106,6 +110,11 @@ class CameraDevice:
             self._loop.close()
 
     async def _run(self):
+        if self.attached:  # no connection of its own: just keep the loop alive for handle_signal()
+            while not self._stop.is_set():
+                await asyncio.sleep(0.5)
+            await self._close_all()
+            return
         backoff = 1
         while not self._stop.is_set():
             try:
@@ -159,8 +168,10 @@ class CameraDevice:
             return
         if mtype != "signal":
             return
-        viewer = msg.get("from")
-        data = msg.get("data") or {}
+        await self.handle_signal(ws, msg.get("from"), msg.get("data") or {})
+
+    async def handle_signal(self, ws, viewer, data):
+        """A viewer's signal (request / answer / ice). ws is None for an attached camera."""
         kind = data.get("kind")
         if kind == "request":
             await self._start_stream(ws, viewer)
@@ -179,6 +190,10 @@ class CameraDevice:
                 await pc.addIceCandidate(ice)
 
     def _signal(self, ws, viewer, data):
+        if self.attached:
+            if self._send_attached:
+                self._send_attached(viewer, {**data, "camera": self.id})
+            return
         ws.send(json.dumps({"type": "signal", "to": viewer, "data": data}))
 
     async def _start_stream(self, ws, viewer):
@@ -266,10 +281,41 @@ class CameraDevice:
 
 
 class CameraManager:
-    """Starts/stops one CameraDevice per configured RTSP camera."""
+    """Starts/stops one CameraDevice per configured RTSP camera, and routes the agent's signals to the attached ones."""
 
     def __init__(self, ws_url, insecure, cameras):
         self.devices = [CameraDevice(ws_url, insecure, c) for c in cameras]
+        self.running = False
+
+    def attached(self):
+        return [d for d in self.devices if d.attached]
+
+    def capability(self):
+        """The camera picker entries for the agent's own device (attached cameras), or None."""
+        cams = self.attached()
+        if not cams or not self.running:
+            return None
+        return {"cap": "camera", "cameras": [{"id": d.id, "name": d.name, "source": "rtsp"} for d in cams]}
+
+    def set_sender(self, send):
+        """send(viewer, data): how attached cameras reach viewers (the agent's live connection), or None."""
+        for d in self.attached():
+            d._send_attached = send
+
+    def on_signal(self, viewer, data):
+        """A signal from the agent's connection. True if it was for an attached camera (handled here)."""
+        cam = data.get("camera")
+        for d in self.attached():
+            if d.id == cam and d._loop is not None:
+                asyncio.run_coroutine_threadsafe(d.handle_signal(None, viewer, data), d._loop)
+                return True
+        return False
+
+    def drop_viewers(self):
+        """The agent's connection dropped: close every attached camera's viewers (they will ask again)."""
+        for d in self.attached():
+            if d._loop is not None:
+                asyncio.run_coroutine_threadsafe(d._close_all(), d._loop)
 
     def start(self):
         if not self.devices:
@@ -280,6 +326,7 @@ class CameraManager:
             return
         for d in self.devices:
             d.start()
+        self.running = True
         print(f"[camera] relaying {len(self.devices)} camera(s): " + ", ".join(d.name for d in self.devices))
 
     def stop(self):
@@ -293,7 +340,7 @@ def validate_cameras(cameras):
     seen = set()
     for i, cam in enumerate(cameras):
         where = f"cameras[{i}]"
-        for field in ("id", "token", "rtsp"):
+        for field in ("id", "rtsp"):  # no "token" = attached to this agent's device
             if not cam.get(field):
                 problems.append(f"{where}: missing '{field}'")
         cid = cam.get("id")

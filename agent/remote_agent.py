@@ -28,6 +28,7 @@ import json
 import os
 import platform
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -87,8 +88,11 @@ def pair(code, base_url, path):
 
 
 class Agent:
-    def __init__(self, cfg):
+    def __init__(self, cfg, cams=None):
         self.cfg = cfg
+        self.cams = cams  # CameraManager: attached cameras show in this device's camera picker (M7)
+        self.discovery_networks = (cfg.get("discovery") or {}).get("networks", [])
+        self._scanning = threading.Lock()
         self.device = cfg["device"]
         self.token = cfg["token"]
         self.url = cfg["server"]
@@ -108,7 +112,34 @@ class Agent:
             caps.append({"cap": "scripts", "scripts": [{"id": s["id"], "label": s.get("label", s["id"])} for s in self.scripts]})
         if self.shell_enabled:
             caps.append({"cap": "shell"})
+        camera = self.cams.capability() if self.cams else None
+        if camera:
+            caps.append(camera)
+        # camera discovery, only on one of the owner's networks (config "discovery": {"networks": [...]})
+        trusted = scan.trusted_network(self.discovery_networks)
+        if trusted:
+            ip, net = trusted
+            caps.append({"cap": "discovery", "network": {"name": str(net), "subnet": str(net)}})
         return caps
+
+    def _scan(self, ws, req):
+        """discovery/scan: streams each device as it is found, then the full list (M7d)."""
+        if not self._scanning.acquire(blocking=False):
+            self._reply(ws, req, {"ok": False, "error": "A scan is already running."})
+            return
+        try:
+            trusted = scan.trusted_network(self.discovery_networks)
+            if not trusted:
+                self._reply(ws, req, {"ok": False, "error": "This computer isn't on one of your networks (config.json discovery.networks)."})
+                return
+            ip, net = trusted
+            targets = scan.subnet(ip, net.prefixlen)
+            hosts = scan.discover(targets, on_update=lambda h: ws.send(json.dumps({"type": "stream", "reqId": req, "chunk": h})))
+            self._reply(ws, req, {"ok": True, "data": {"hosts": hosts}})
+        except Exception as exc:  # noqa: BLE001
+            self._reply(ws, req, {"ok": False, "error": str(exc)})
+        finally:
+            self._scanning.release()
 
     def _reply(self, ws, req, body):
         ws.send(json.dumps({"type": "result", "reqId": req, **body}))
@@ -117,7 +148,9 @@ class Agent:
         cap, op, req = msg.get("cap"), msg.get("do"), msg.get("reqId")
         args = msg.get("args") or {}
         try:
-            if cap == "gpio" and op == "set":
+            if cap == "discovery" and op == "scan":
+                threading.Thread(target=self._scan, args=(ws, req), daemon=True).start()  # a few seconds
+            elif cap == "gpio" and op == "set":
                 self._reply(ws, req, {"ok": True, "data": self.gpio.set(int(args["pin"]), args["value"])})
             elif cap == "scripts" and op == "run":
                 self.shellmgr.run_script(req, args.get("id"))          # streams + sends its own result
@@ -138,6 +171,8 @@ class Agent:
         ws = WebSocketClient(self.url, insecure=self.insecure)
         ws.connect()
         self.shellmgr = ShellManager(ws, self.scripts, self.shell_enabled)
+        if self.cams:
+            self.cams.set_sender(lambda viewer, data: ws.send(json.dumps({"type": "signal", "to": viewer, "data": data})))
         ws.send(json.dumps({
             "type": "hello",
             "token": self.token,
@@ -160,7 +195,12 @@ class Agent:
                           ", ".join(c["cap"] for c in self.capabilities()) or "(none)")
                 elif mtype == "action":
                     self.dispatch(ws, msg)
+                elif mtype == "signal" and self.cams:
+                    self.cams.on_signal(msg.get("from"), msg.get("data") or {})
         finally:
+            if self.cams:
+                self.cams.set_sender(None)
+                self.cams.drop_viewers()
             if self.shellmgr:
                 self.shellmgr.shutdown()
             ws.close()
@@ -207,7 +247,7 @@ def main():
     cams = CameraManager(cfg["server"], bool(cfg.get("insecure", False)), cameras)
     cams.start()
 
-    agent = Agent(cfg)
+    agent = Agent(cfg, cams)
     try:
         agent.run_forever()
     except KeyboardInterrupt:
