@@ -110,10 +110,24 @@ Enable RTSP in the camera's own app first (often under *Advanced / Network /
 RTSP*), and create a viewer account there rather than using the admin login.
 If a camera is slow or drops, set `"transport": "udp"` on that entry.
 
-## Run as a service (later)
+## Start by itself (M8a)
 
-On the Pi, a systemd unit keeps it running and reconnecting across reboots
-(added with the M5/M6 polish). Until then, run it under `tmux` or `systemd-run`.
+After pairing, install the agent as a service once: it then starts by itself and comes back after a crash or
+a reboot. From this folder:
+
+| System | Install | Remove | Logs |
+|---|---|---|---|
+| Linux / Raspberry Pi | `sudo ./service/install-linux.sh` | `sudo ./service/install-linux.sh --uninstall` | `journalctl -u remote-agent -f` |
+| Windows | `powershell -ExecutionPolicy Bypass -File service\install-windows.ps1` | same with `-Uninstall` | `logs\agent.log` |
+| macOS | `./service/install-macos.sh` | `./service/install-macos.sh --uninstall` | `~/Library/Logs/remote-agent.log` |
+
+- **Linux / Pi:** a systemd service, started at boot once the network is up (no sign-in needed), restarted 5 s
+  after any crash, run as the user who called `sudo` (`--user NAME` to choose). `--print` shows the unit only.
+- **Windows:** a scheduled task that starts when you sign in, restarts every minute after a failure and keeps
+  running on battery. Install real Python from python.org (the Microsoft Store placeholder is skipped).
+- **macOS:** a LaunchAgent that starts when you sign in and is restarted if it stops.
+- After changing `config.json`, restart it: `sudo systemctl restart remote-agent` (Linux), sign out/in or
+  *Task Scheduler → Remote agent → End/Run* (Windows), `./service/install-macos.sh` again (macOS).
 
 ## Security
 

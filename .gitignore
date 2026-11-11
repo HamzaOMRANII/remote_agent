@@ -6,3 +6,5 @@ venv/
 config.json
 *.log
 .DS_Store
+logs/
+service/run-agent.cmd
