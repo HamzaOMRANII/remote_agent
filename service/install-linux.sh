@@ -63,8 +63,8 @@ esac
 id "$RUN_USER" >/dev/null 2>&1 || { echo "user '$RUN_USER' does not exist" >&2; exit 1; }
 [ -f "$DIR/config.json" ] || { echo "No config.json yet: pair this device first (see README, --pair)." >&2; exit 1; }
 grep -q '"token"' "$DIR/config.json" || { echo "config.json has no token: pair this device first." >&2; exit 1; }
-if grep -q '"rtsp"' "$DIR/config.json" && ! sudo -u "$RUN_USER" "$PYTHON" -c "import aiortc" 2>/dev/null; then
-  echo "Note: cameras are configured but aiortc isn't installed for $RUN_USER: pip install aiortc (as $RUN_USER)." >&2
+if ! sudo -u "$RUN_USER" "$PYTHON" -c "import aiortc" 2>/dev/null; then
+  echo "Note: video (this computer's cameras + network cameras) needs aiortc, not installed for $RUN_USER: pip install aiortc (as $RUN_USER)." >&2
 fi
 
 unit > "$UNIT"

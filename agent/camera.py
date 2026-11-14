@@ -35,7 +35,7 @@ try:
         RTCPeerConnection,
         RTCSessionDescription,
     )
-    from aiortc.contrib.media import MediaPlayer
+    from aiortc.contrib.media import MediaPlayer, MediaRelay
     from aiortc.sdp import candidate_from_sdp
 
     AIORTC_OK = True
@@ -72,8 +72,12 @@ class CameraDevice:
         self.token = cam.get("token") or ""
         self.attached = not self.token
         self._send_attached = None  # set by CameraManager: (viewer, data) -> None, on the agent's connection
-        self.rtsp = cam["rtsp"]
-        self.want_audio = bool(cam.get("audio", False))
+        self.source = cam.get("source") or "rtsp"   # "rtsp" (network camera) or "local" (this computer's camera, M9)
+        self.rtsp = cam.get("rtsp", "")
+        self.input = cam.get("input", "")         # local: "video=<name>" (dshow), "/dev/video0" (v4l2), "<name>:none"
+        self.format = cam.get("format", "")
+        self.local_options = dict(cam.get("options") or {})
+        self.want_audio = bool(cam.get("audio", False)) and self.source == "rtsp"
         # ffmpeg/PyAV options for a reliable pull from most cameras. Kept to widely
         # supported ones: "rtsp_transport" tcp survives Wi-Fi loss better than udp, and
         # "timeout" (microseconds) bounds a dead connection. (The older "stimeout" name
@@ -87,7 +91,8 @@ class CameraDevice:
         self._loop = None
         self._stop = threading.Event()
         self._pcs = {}     # viewer id -> RTCPeerConnection
-        self._players = {}  # viewer id -> MediaPlayer
+        self._player = None  # ONE open camera shared by every viewer (a webcam can only be opened once)
+        self._relay = None
         self._ws = None
 
     # ---- lifecycle -------------------------------------------------------
@@ -202,14 +207,10 @@ class CameraDevice:
             pc = RTCPeerConnection(RTCConfiguration(iceServers=self._ice_servers()))
             self._pcs[viewer] = pc
 
-            player = MediaPlayer(self.rtsp, format="rtsp", options=self.options)
-            self._players[viewer] = player
-            if player.video:
-                pc.addTrack(player.video)
+            player = await self._open()
+            pc.addTrack(self._relay.subscribe(player.video, buffered=False))
             if self.want_audio and player.audio:
-                pc.addTrack(player.audio)
-            if not player.video:
-                raise RuntimeError("no video track from the camera")
+                pc.addTrack(self._relay.subscribe(player.audio, buffered=False))
 
             @pc.on("connectionstatechange")
             async def _on_state():  # noqa: ANN202
@@ -227,9 +228,44 @@ class CameraDevice:
             self._signal(ws, viewer, {"kind": "error", "error": self._friendly(str(exc))})
             await self._close_viewer(viewer)
 
+    def _make_player(self, options):
+        if self.source == "local":
+            return MediaPlayer(self.input, format=self.format, options=options)
+        return MediaPlayer(self.rtsp, format="rtsp", options=self.options)
+
+    async def _open(self):
+        """The shared player: opened by the first viewer, closed after the last one leaves."""
+        if self._player is None:
+            loop = asyncio.get_running_loop()
+            try:
+                player = await loop.run_in_executor(None, self._make_player, self.local_options)
+            except Exception:
+                if self.source != "local" or not self.local_options:
+                    raise
+                # the camera refused the size / frame rate we asked for: let it pick its own
+                player = await loop.run_in_executor(None, self._make_player, {})
+            if not player.video:
+                raise RuntimeError("no video track from the camera")
+            self._player, self._relay = player, MediaRelay()
+        return self._player
+
+    def _release_if_idle(self):
+        if self._pcs or self._player is None:
+            return
+        try:
+            if self._player.video:
+                self._player.video.stop()
+            if self._player.audio:
+                self._player.audio.stop()
+        except Exception:
+            pass
+        self._player = self._relay = None
+
     @staticmethod
     def _friendly(err):
         low = err.lower()
+        if "could not find video device" in low or "no such file" in low or "i/o error" in low or "device or resource busy" in low:
+            return "This computer's camera is busy or unplugged — close other apps using it (Teams, Zoom, Camera) and try again."
         if "401" in err or "unauthorized" in low or "authoriz" in low:
             return "Wrong camera username or password."
         if "timed out" in low or "timeout" in low or "etimedout" in low:
@@ -260,20 +296,12 @@ class CameraDevice:
 
     async def _close_viewer(self, viewer):
         pc = self._pcs.pop(viewer, None)
-        player = self._players.pop(viewer, None)
-        if player:
-            try:
-                if player.video:
-                    player.video.stop()
-                if player.audio:
-                    player.audio.stop()
-            except Exception:
-                pass
         if pc:
             try:
                 await pc.close()
             except Exception:
                 pass
+        self._release_if_idle()
 
     async def _close_all(self):
         for viewer in list(self._pcs):
@@ -284,8 +312,10 @@ class CameraManager:
     """Starts/stops one CameraDevice per configured RTSP camera, and routes the agent's signals to the attached ones."""
 
     def __init__(self, ws_url, insecure, cameras):
+        self.ws_url, self.insecure = ws_url, insecure
         self.devices = [CameraDevice(ws_url, insecure, c) for c in cameras]
         self.running = False
+        self._send = None
 
     def attached(self):
         return [d for d in self.devices if d.attached]
@@ -295,12 +325,29 @@ class CameraManager:
         cams = self.attached()
         if not cams or not self.running:
             return None
-        return {"cap": "camera", "cameras": [{"id": d.id, "name": d.name, "source": "rtsp"} for d in cams]}
+        return {"cap": "camera", "cameras": [{"id": d.id, "name": d.name, "source": d.source} for d in cams]}
 
     def set_sender(self, send):
         """send(viewer, data): how attached cameras reach viewers (the agent's live connection), or None."""
+        self._send = send
         for d in self.attached():
             d._send_attached = send
+
+    def add(self, cam):
+        """Adds (or replaces) one attached camera while running (M9: added from the dashboard, or plugged in)."""
+        self.remove(cam["id"])
+        d = CameraDevice(self.ws_url, self.insecure, cam)
+        d._send_attached = self._send
+        self.devices.append(d)
+        if AIORTC_OK:
+            d.start()
+            self.running = True
+        return d
+
+    def remove(self, cam_id):
+        for d in [d for d in self.devices if d.id == cam_id]:
+            d.stop()
+            self.devices.remove(d)
 
     def on_signal(self, viewer, data):
         """A signal from the agent's connection. True if it was for an attached camera (handled here)."""
@@ -318,15 +365,17 @@ class CameraManager:
                 asyncio.run_coroutine_threadsafe(d._close_all(), d._loop)
 
     def start(self):
-        if not self.devices:
-            return
         if not AIORTC_OK:
+            if not self.devices:
+                return
             print("[camera] cameras are configured but aiortc is not installed.")
             print(f"[camera] run:  pip install aiortc      (import error: {AIORTC_ERROR})")
             return
+        self.running = True
+        if not self.devices:
+            return
         for d in self.devices:
             d.start()
-        self.running = True
         print(f"[camera] relaying {len(self.devices)} camera(s): " + ", ".join(d.name for d in self.devices))
 
     def stop(self):

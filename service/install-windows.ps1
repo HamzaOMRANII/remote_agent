@@ -29,6 +29,15 @@ $Config = Join-Path $Dir 'config.json'
 if (-not (Test-Path $Config)) { throw 'No config.json yet: pair this device first (see README, --pair).' }
 if (-not (Select-String -Path $Config -Pattern '"token"' -Quiet)) { throw 'config.json has no token: pair this device first.' }
 
+# Video (M9): this laptop's own camera and the network cameras need aiortc (bundles ffmpeg). Installed once, for this user.
+$PyPre = if ($PyArgs -like '-3*') { @('-3') } else { @() }
+& $Python @PyPre -c "import aiortc" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host 'Installing video support (aiortc, one time, ~1 minute)...'
+    & $Python @PyPre -m pip install --user --disable-pip-version-check aiortc
+    if ($LASTEXITCODE -ne 0) { Write-Warning 'Could not install aiortc: cameras stay off. Try:  py -m pip install aiortc' }
+}
+
 $Logs = Join-Path $Dir 'logs'
 New-Item -ItemType Directory -Force -Path $Logs | Out-Null
 # A small wrapper so the output lands in a log file (a scheduled task has no console)
