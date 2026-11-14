@@ -18,6 +18,7 @@ without hardware.
 - ✅ `gpio` capability: digital pin (light on/off) and PWM pin (servo angle).
 - ✅ `scripts` / `shell`, one-time **pairing**.
 - ✅ `camera`: relay **local IP cameras** (RTSP) to the dashboard — see below.
+- ✅ M9: this computer's own cameras + **Add** network cameras from the dashboard with only their password.
 
 ## Install
 
@@ -53,6 +54,22 @@ config. Later runs: `python3 agent/remote_agent.py`.
 
 Pin `kind`: `digital` renders a switch in the dashboard; `pwm` renders a servo
 slider (`min_angle`/`max_angle`).
+
+## Cameras — the easy way (M9)
+
+1. Install video once: `pip install aiortc` (the Windows installer in `service\` does it for you).
+2. Start the agent. **This computer's own cameras** (built-in webcam, any USB camera) appear by themselves in
+   the device's camera list on the dashboard; one plugged in later shows up within a minute.
+3. On the dashboard, in the device's **Cameras** panel: **This is my network** (once, on your home Wi-Fi), then
+   **Scan for cameras**. Each network camera gets an **Add** button: type only the camera's own username and
+   password. The agent finds the stream link itself (ONVIF, else the usual links of the brand), checks it, and
+   saves it in `config.json` (mode 600, never sent to the server). **Remove** takes it away.
+
+If a camera answers but no video is found: turn on **RTSP / ONVIF** in the camera's own app (Tapo, Ezviz, Imou
+and some others ship with it off), then press Add again. To hide this computer's cameras:
+`"local_cameras": false` in `config.json`.
+
+The manual way below still works.
 
 ## IP cameras (RTSP → dashboard)
 
